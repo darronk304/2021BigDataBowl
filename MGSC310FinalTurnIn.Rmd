@@ -1,0 +1,285 @@
+---
+title: "Final Project Big Data Bowl"
+author: "Darron Kotoyan, Nic Vamis, Obada Yosef"
+subtitle: MGSC 310 Problem Set Template
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+
+# Please leave this code chunk as is. It makes some slight formatting changes to alter the output to be more aesthetically pleasing. 
+
+library(knitr)
+
+# Change the number in set seed to your own favorite number
+set.seed(6969)
+options(width=70)
+options(scipen=99)
+
+
+# this sets text outputted in code chunks to small
+opts_chunk$set(tidy.opts=list(width.wrap=50),tidy=TRUE, size = "vsmall")  
+opts_chunk$set(message = FALSE,                                          
+               warning = FALSE,
+               # "caching" stores objects in code chunks and only rewrites if you change things
+               cache = FALSE,                               
+               # automatically downloads dependency files
+               autodep = TRUE,
+               # 
+               cache.comments = FALSE,
+               # 
+               collapse = TRUE,
+               # change fig.width and fig.height to change the code height and width by default
+               fig.width = 5.5,  
+               fig.height = 4.5,
+               fig.align='center')
+
+
+```
+
+```{r setup-2}
+
+# Always print this out before your assignment
+sessionInfo()
+getwd()
+
+```
+
+
+<!-- ### start answering your problem set here -->
+<!-- You may export your homework in either html or pdf, with the former usually being easier. 
+     To export or compile your Rmd file: click above on 'Knit' then 'Knit to HTML' -->
+<!-- Be sure to submit both your .Rmd file and the compiled .html or .pdf file for full credit -->
+
+
+```{r setup-3}
+
+# load all your libraries in this chunk 
+library('dplyr')
+library('tidyverse')
+library('utils')
+library('rsample')
+library('glmnet')
+library('glmnetUtils')
+library('forcats')
+library('rsample')
+library('ggplot2')
+library('sjPlot')
+library('Publish')
+library('data.table')
+library('psych')
+library('partykit')
+library('PerformanceAnalytics')
+library('rpart')
+library('rpart.plot')
+library('maptree')
+library('randomForestExplainer')
+library('rpart')
+library('visNetwork')
+library('caret')
+library('ISLR')
+
+
+# note, do not run install.packages() inside a code chunk. install them in the console outside of a code chunk. 
+
+```
+
+
+```{r}
+plays <- read.csv(here::here("Datasets", "plays.csv"))
+pff <- read.csv(here::here("Datasets", "PFFscoutingdata.csv"))
+head(pff)
+
+```
+
+```{r}
+
+DF <- full_join(x = plays,
+                 y = pff,
+                 by = "gameId")
+
+DF2 = select(DF, -5:-7, -10:-21, -25:-29, -32:-43)
+
+DF2 %>% drop_na()
+
+DF2$return_type[DF2$kickReturnYardage < 20] = "Short"
+DF2$return_type[DF2$kickReturnYardage > 20 & DF2$kickReturnYardage < 50] = "Medium"
+DF2$return_type[DF2$kickReturnYardage > 50] = "Long"
+
+FinalDF <- data.frame(DF2, stringsAsFactors = TRUE) %>%
+  drop_na() %>%
+  mutate(return_type = as.factor(return_type),
+         kickType = as.factor(kickType),
+         kickContactType = as.factor(kickContactType))
+head(FinalDF)
+  
+```
+
+
+```{r}
+
+summary(FinalDF)
+
+```
+
+```{r}
+
+ggplot(data = FinalDF, aes(x = hangTime, y = kickLength)) + geom_point()
+
+```
+
+
+
+```{r}
+
+ggplot(data = FinalDF, aes(x = kickLength, y = kickReturnYardage)) + geom_point()
+
+```
+
+
+```{r}
+
+ggplot(data = FinalDF, aes(x = return_type)) + geom_bar()
+```
+
+
+
+
+
+```{r}
+df_split <- initial_split(FinalDF, prop = 0.75)
+df_train <- training(df_split)
+df_test <- testing(df_split)
+
+dim(df_train)
+dim(df_test)
+
+mod1 <- lm(kickReturnYardage ~ kickLength + hangTime + kickContactType + playResult,
+           data = df_train)
+
+plot(x = predict(mod1), y = df_train$kickReturnYardage,
+     xlab='Predicted Values',
+     ylab='Actual Values',
+     main='Predicted vs. Actual Values (Training Model)',
+     col= 1)
+abline(a = 0, b = 1)
+
+print(mean((df_train$kickReturnYardage - predict(mod1))^2))
+
+plot(x = predict(mod1, newdata = df_test), y = df_test$kickReturnYardage,
+     xlab='Predicted Values',
+     ylab='Actual Values',
+     main='Predicted vs. Actual Values (Testing Model)',
+     col= 1)
+abline(a = 0, b = 1)
+
+print(mean((df_test$kickReturnYardage - predict(mod1))^2))
+```
+
+```{r}
+preds_test <- predict(mod1, newdata = df_test)
+
+preds_df <- data.frame(
+  `predicted_values` = preds_test,
+  `kick_distance_yards` = df_test$kickLength
+)
+
+head(preds_df)
+
+ggplot(data = preds_df, aes(x = kick_distance_yards, y = predicted_values)) + geom_point() + theme_minimal()
+
+#total = 10426
+preds_df %>%
+  count(predicted_values > 50) #148, 1.4%
+
+preds_df %>%
+  count(predicted_values < 20) #7160, 68.7%
+
+preds_df %>%
+  count(between(predicted_values, 20, 50)) #3118, 29.9%
+
+```
+
+
+```{r}
+
+library('sparkline')
+
+
+summary_mod_rpart <- rpart(return_type ~ kickLength + hangTime,
+                           data = df_train,
+                           method = "class",
+                           control = list(cp = 0,
+                                          minsplit = 10,
+                                          maxdepth = 5))
+summary_mod_rpart$cptable
+
+plotcp(summary_mod_rpart)
+2:16
+visNetwork::visTree(summary_mod_rpart,
+                    nodesPopSize = TRUE,
+                    edgesFontSize = 18,
+                    nodesFontSize = 20,
+                    width = "100%",
+                    height = "1200px")
+
+
+
+```
+
+
+
+
+```{r}
+
+library('randomForest')
+
+modfit.rf <- randomForest(kickContactType ~  kickLength + hangTime, data=df_train)
+
+# Predict the testing set with the trained model
+predictions2 <- predict(modfit.rf, df_test, type = "class")
+
+# Accuracy and other metrics
+confusionMatrix(df_test$kickContactType, predictions2)
+
+
+#rf_fit <- randomForest(kickContactType ~ 
+#                      kickLength + hangTime, 
+ #                     data = df_train,
+ #                     type = classification,
+ #                      mtry = 4,
+  #                     na.action = na.roughfix,
+  #                     ntree = 60, 
+   #                    importance = TRUE)
+
+#print(rf_fit)
+
+#plot(rf_fit)
+
+
+
+#tree_mod2 <- ctree(kickContactType ~ kickLength + hangTime,
+#                        data = df_train)
+
+#print(tree_mod2)
+#plot(tree_mod2) 
+
+
+#mod2 <- lm(log(kickContactType) ~ kickLength + hangTime, 
+           #data = df_train)
+#summary(mod2)
+
+#modfit.rpart <- rpart(classe ~ ., data=training, method="class", xval = 4)
+#print(modfit.rpart, digits = 3)
+
+#predictions1 <- predict(modfit.rpart, testing, type = "class")
+
+# Accuracy and other metrics
+#confusionMatrix(predictions1, testing$classe)
+
+```
+
+
